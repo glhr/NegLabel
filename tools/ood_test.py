@@ -7,6 +7,7 @@ from numbers import Number
 import mmcv
 import numpy as np
 import torch
+import torchvision as tv
 import time
 from mmcv import DictAction
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
@@ -19,8 +20,12 @@ from mmcls.datasets import build_dataloader, build_dataset
 from mmcls.models import build_ood_model
 from mmcls.utils import get_root_logger, setup_multi_processes, gather_tensors, evaluate_all
 
+from data_utils import get_id_dataset, get_ood_dataset, get_ood_dict, get_dataloader, get_label_to_class_mapping
+
 def parse_args():
     parser = argparse.ArgumentParser(description='ood test')
+    parser.add_argument('--id_name', type=str, default='imagenet', help='in-distribution dataset name')
+    parser.add_argument('--clip_arch', type=str, default='ViT-B/16', help='CLIP model architecture')
     parser.add_argument('config', help='test config file path')
     parser.add_argument('checkpoint', help='checkpoint file')
     out_options = ['class_scores', 'pred_score', 'pred_label', 'pred_class']
@@ -97,16 +102,57 @@ def main():
 
     for cfg in multi_cfg:
         if os.environ['LOCAL_RANK'] == '0':
-            print("Evaluating {}...".format(cfg.readable_name))
+            print("Evaluating...")
         if not is_init:
             cfg, distributed = init_eval(cfg, args)
             is_init = True
 
         cfg.gpu_ids = [int(os.environ['LOCAL_RANK'])]
 
-        dataset_id = build_dataset(cfg.data.id_data)
-        dataset_ood = [build_dataset(d) for d in cfg.data.ood_data]
-        name_ood = [d['name'] for d in cfg.data.ood_data]
+        #dataset_id = build_dataset(cfg.data.id_data)
+        in_dataset = args.id_name
+        cfg.model.classifier.arch = args.clip_arch
+        cfg.model.classifier.train_dataset = in_dataset
+        cfg.model.classifier.class_name = get_label_to_class_mapping(in_dataset)
+        if args.clip_arch == "ViT-B/16":
+            readable_name = 'NegLabel_CLIPb16'
+        elif args.clip_arch == "ViT-B/32":
+            readable_name = 'NegLabel_CLIPb32'
+        elif args.clip_arch == "ViT-L/14":
+            readable_name = 'NegLabel_CLIPL14'
+
+        print(cfg)
+        root_dir = "../OpenOOD/data/"
+        transform_type = 'ImageNet'
+        if transform_type == 'ImageNet':
+            transform = tv.transforms.Compose([
+                tv.transforms.Resize(224),
+                tv.transforms.CenterCrop(224),
+                tv.transforms.ToTensor(),
+                tv.transforms.Normalize([0.48145466, 0.4578275, 0.40821073],
+                                        [0.26862954, 0.26130258, 0.27577711]),
+            ])
+        elif transform_type == 'Cifar':
+            transform = tv.transforms.Compose([
+                tv.transforms.Resize(32),
+                tv.transforms.CenterCrop(32),
+                tv.transforms.ToTensor(),
+                tv.transforms.Normalize([0.4914, 0.4822, 0.4465],
+                                        [0.2023, 0.1994, 0.2010]),
+            ])
+
+        dataset_id = get_id_dataset(id_name=in_dataset, split='test', data_root=root_dir, preprocessor=transform)
+        out_datasets = get_ood_dict(in_dataset)
+        dataset_ood = []
+        name_ood = []
+        for ood_name, category in out_datasets.items():
+            print(ood_name, category)
+            ds = get_ood_dataset(id_name=in_dataset, ood_name=ood_name, split=category, data_root=root_dir, preprocessor=transform)
+            dataset_ood.append(ds)
+            name_ood.append(ood_name)
+
+        #dataset_ood = [build_dataset(d) for d in cfg.data.ood_data]
+        #name_ood = [d['name'] for d in cfg.data.ood_data]
 
         # build the dataloader
         # The default loader config
@@ -117,23 +163,29 @@ def main():
             round_up=True,
         )
         # The overall dataloader settings
-        loader_cfg.update({
-            k: v
-            for k, v in cfg.data.items() if k not in [
-                'id_data', 'ood_data'
-            ]
-        })
-        test_loader_cfg = {
-            **loader_cfg,
-            'shuffle': False,  # Not shuffle by default
-            'sampler_cfg': None,  # Not use sampler by default
-            **cfg.data.get('test_dataloader', {}),
-        }
+        # loader_cfg.update({
+        #     k: v
+        #     for k, v in cfg.data.items() if k not in [
+        #         'id_data', 'ood_data'
+        #     ]
+        # })
+        # test_loader_cfg = {
+        #     #**loader_cfg,
+        #     'shuffle': False,  # Not shuffle by default
+        #     'sampler_cfg': None,  # Not use sampler by default
+        #     **cfg.data.get('test_dataloader', {}),
+        # }
         # the extra round_up data will be removed during gpu/cpu collect
-        data_loader_id = build_dataloader(dataset_id, **test_loader_cfg)
+        #data_loader_id = build_dataloader(dataset_id, **test_loader_cfg)
+        lower_kwargs = {
+            "shuffle": False,
+            "batch_size": 128,
+        }
+        data_loader_id = get_dataloader(dataset_id, lower_kwargs)
         data_loader_ood = []
         for ood_set in dataset_ood:
-            data_loader_ood.append(build_dataloader(ood_set, **test_loader_cfg))
+            #data_loader_ood.append(build_dataloader(ood_set, **test_loader_cfg))
+            data_loader_ood.append(get_dataloader(ood_set, lower_kwargs))
 
         model = build_ood_model(cfg.model)
         # if not cfg.model.classifier.type == 'VitClassifier':
@@ -147,12 +199,14 @@ def main():
 
         # init distributed env first, since logger depends on the dist info.
         # logger setup
+        
+
         if os.environ['LOCAL_RANK'] == '0':
             timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
-            log_file = os.path.join(cfg.work_dir, '{}_{}.log'.format(cfg.readable_name, timestamp))
+            log_file = os.path.join(cfg.work_dir, '{}_{}_{}.log'.format(args.id_name, readable_name, timestamp))
             os.makedirs(cfg.work_dir, exist_ok=True)
             logger = get_root_logger(log_file=log_file, log_level=cfg.log_level,
-                                     logger_name='mmcls' if len(multi_cfg) == 1 else cfg.readable_name)
+                                     logger_name='mmcls' if len(multi_cfg) == 1 else readable_name)
         if os.environ['LOCAL_RANK'] == '0':
             print()
             print("Processing in-distribution data...")

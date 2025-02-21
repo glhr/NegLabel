@@ -1,0 +1,746 @@
+import ast
+import io
+import logging
+import os
+import pickle
+
+import torch
+from PIL import Image, ImageFile
+
+import logging
+import random
+import traceback
+
+from torch.utils.data import Dataset
+
+class BaseDataset(Dataset):
+    def __init__(self, pseudo_index=-1, skip_broken=False, new_index='next'):
+        super(BaseDataset, self).__init__()
+        self.pseudo_index = pseudo_index
+        self.skip_broken = skip_broken
+        self.new_index = new_index
+        if new_index not in ('next', 'rand'):
+            raise ValueError('new_index not one of ("next", "rand")')
+
+    def __getitem__(self, index):
+        # in some pytorch versions, input index will be torch.Tensor
+        index = int(index)
+
+        # if sampler produce pseudo_index,
+        # randomly sample an index, and mark it as pseudo
+        if index == self.pseudo_index:
+            index = random.randrange(len(self))
+            pseudo = 1
+        else:
+            pseudo = 0
+
+        while True:
+            try:
+                sample = self.getitem(index)
+                break
+            except Exception as e:
+                if self.skip_broken and not isinstance(e, NotImplementedError):
+                    if self.new_index == 'next':
+                        new_index = (index + 1) % len(self)
+                    else:
+                        new_index = random.randrange(len(self))
+                    logging.warn(
+                        'skip broken index [{}], use next index [{}]'.format(
+                            index, new_index))
+                    index = new_index
+                else:
+                    logging.error('index [{}] broken'.format(index))
+                    traceback.print_exc()
+                    logging.error(e)
+                    raise e
+
+        sample['index'] = index
+        sample['pseudo'] = pseudo
+        return sample
+
+    def getitem(self, index):
+        raise NotImplementedError
+
+
+DATA_INFO = {
+    'cifar10': {
+        'num_classes': 10,
+        'id': {
+            'train': {
+                'data_dir': 'images_classic/',
+                'imglist_path': 'benchmark_imglist/cifar10/train_cifar10.txt'
+            },
+            'val': {
+                'data_dir': 'images_classic/',
+                'imglist_path': 'benchmark_imglist/cifar10/val_cifar10.txt'
+            },
+            'test': {
+                'data_dir': 'images_classic/',
+                'imglist_path': 'benchmark_imglist/cifar10/test_cifar10.txt'
+            }
+        },
+        'csid': {
+            'datasets': ['cifar10c'],
+            'cinic10': {
+                'data_dir': 'images_classic/',
+                'imglist_path': 'benchmark_imglist/cifar10/val_cinic10.txt'
+            },
+            'cifar10c': {
+                'data_dir': 'images_classic/',
+                'imglist_path': 'benchmark_imglist/cifar10/test_cifar10c.txt'
+            }
+        },
+        'ood': {
+            'val': {
+                'data_dir': 'images_classic/',
+                'imglist_path': 'benchmark_imglist/cifar10/val_tin.txt'
+            },
+            'near': {
+                'datasets': ['cifar100', 'tin'],
+                'cifar100': {
+                    'data_dir': 'images_classic/',
+                    'imglist_path':
+                    'benchmark_imglist/cifar10/test_cifar100.txt'
+                },
+                'tin': {
+                    'data_dir': 'images_classic/',
+                    'imglist_path': 'benchmark_imglist/cifar10/test_tin.txt'
+                }
+            },
+            'far': {
+                'datasets': ['mnist', 'svhn', 'texture', 'places365'],
+                'mnist': {
+                    'data_dir': 'images_classic/',
+                    'imglist_path': 'benchmark_imglist/cifar10/test_mnist.txt'
+                },
+                'svhn': {
+                    'data_dir': 'images_classic/',
+                    'imglist_path': 'benchmark_imglist/cifar10/test_svhn.txt'
+                },
+                'texture': {
+                    'data_dir': 'images_classic/',
+                    'imglist_path':
+                    'benchmark_imglist/cifar10/test_texture.txt'
+                },
+                'places365': {
+                    'data_dir': 'images_classic/',
+                    'imglist_path':
+                    'benchmark_imglist/cifar10/test_places365.txt'
+                },
+            }
+        }
+    },
+    'cifar100': {
+        'num_classes': 100,
+        'id': {
+            'train': {
+                'data_dir': 'images_classic/',
+                'imglist_path': 'benchmark_imglist/cifar100/train_cifar100.txt'
+            },
+            'val': {
+                'data_dir': 'images_classic/',
+                'imglist_path': 'benchmark_imglist/cifar100/val_cifar100.txt'
+            },
+            'test': {
+                'data_dir': 'images_classic/',
+                'imglist_path': 'benchmark_imglist/cifar100/test_cifar100.txt'
+            }
+        },
+        'csid': {
+            'datasets': [],
+        },
+        'ood': {
+            'val': {
+                'data_dir': 'images_classic/',
+                'imglist_path': 'benchmark_imglist/cifar100/val_tin.txt'
+            },
+            'near': {
+                'datasets': ['cifar10', 'tin'],
+                'cifar10': {
+                    'data_dir': 'images_classic/',
+                    'imglist_path':
+                    'benchmark_imglist/cifar100/test_cifar10.txt'
+                },
+                'tin': {
+                    'data_dir': 'images_classic/',
+                    'imglist_path': 'benchmark_imglist/cifar100/test_tin.txt'
+                }
+            },
+            'far': {
+                'datasets': ['mnist', 'svhn', 'texture', 'places365'],
+                'mnist': {
+                    'data_dir': 'images_classic/',
+                    'imglist_path': 'benchmark_imglist/cifar100/test_mnist.txt'
+                },
+                'svhn': {
+                    'data_dir': 'images_classic/',
+                    'imglist_path': 'benchmark_imglist/cifar100/test_svhn.txt'
+                },
+                'texture': {
+                    'data_dir': 'images_classic/',
+                    'imglist_path':
+                    'benchmark_imglist/cifar100/test_texture.txt'
+                },
+                'places365': {
+                    'data_dir': 'images_classic/',
+                    'imglist_path':
+                    'benchmark_imglist/cifar100/test_places365.txt'
+                }
+            },
+        }
+    },
+    'imagenet200': {
+        'num_classes': 200,
+        'id': {
+            'train': {
+                'data_dir':
+                'images_largescale/',
+                'imglist_path':
+                'benchmark_imglist/imagenet200/train_imagenet200.txt'
+            },
+            'val': {
+                'data_dir': 'images_largescale/',
+                'imglist_path':
+                'benchmark_imglist/imagenet200/val_imagenet200.txt'
+            },
+            'test': {
+                'data_dir':
+                'images_largescale/',
+                'imglist_path':
+                'benchmark_imglist/imagenet200/test_imagenet200.txt'
+            }
+        },
+        'csid': {
+            'datasets': ['imagenet_v2', 'imagenet_c', 'imagenet_r'],
+            'imagenet_v2': {
+                'data_dir':
+                'images_largescale/',
+                'imglist_path':
+                'benchmark_imglist/imagenet200/test_imagenet200_v2.txt'
+            },
+            'imagenet_c': {
+                'data_dir':
+                'images_largescale/',
+                'imglist_path':
+                'benchmark_imglist/imagenet200/test_imagenet200_c.txt'
+            },
+            'imagenet_r': {
+                'data_dir':
+                'images_largescale/',
+                'imglist_path':
+                'benchmark_imglist/imagenet200/test_imagenet200_r.txt'
+            },
+        },
+        'ood': {
+            'val': {
+                'data_dir': 'images_largescale/',
+                'imglist_path':
+                'benchmark_imglist/imagenet200/val_openimage_o.txt'
+            },
+            'near': {
+                'datasets': ['ssb_hard', 'ninco'],
+                'ssb_hard': {
+                    'data_dir':
+                    'images_largescale/',
+                    'imglist_path':
+                    'benchmark_imglist/imagenet200/test_ssb_hard.txt'
+                },
+                'ninco': {
+                    'data_dir': 'images_largescale/',
+                    'imglist_path':
+                    'benchmark_imglist/imagenet200/test_ninco.txt'
+                }
+            },
+            'far': {
+                'datasets': ['inaturalist', 'textures', 'openimage_o'],
+                'inaturalist': {
+                    'data_dir':
+                    'images_largescale/',
+                    'imglist_path':
+                    'benchmark_imglist/imagenet200/test_inaturalist.txt'
+                },
+                'textures': {
+                    'data_dir':
+                    'images_classic/',
+                    'imglist_path':
+                    'benchmark_imglist/imagenet200/test_textures.txt'
+                },
+                'openimage_o': {
+                    'data_dir':
+                    'images_largescale/',
+                    'imglist_path':
+                    'benchmark_imglist/imagenet200/test_openimage_o.txt'
+                },
+            },
+        }
+    },
+    'imagenet': {
+        'num_classes': 1000,
+        'id': {
+            'train': {
+                'data_dir': 'images_largescale/',
+                'imglist_path': 'benchmark_imglist/imagenet/train_imagenet.txt'
+            },
+            'val': {
+                'data_dir': 'images_largescale/',
+                'imglist_path': 'benchmark_imglist/imagenet/val_imagenet.txt'
+            },
+            'test': {
+                'data_dir': 'images_largescale/',
+                'imglist_path': 'benchmark_imglist/imagenet/test_imagenet.txt'
+            }
+        },
+        'csid': {
+            'datasets':
+            ['imagenet_v2', 'imagenet_c', 'imagenet_r', 'imagenet_es'],
+            'imagenet_v2': {
+                'data_dir': 'images_largescale/',
+                'imglist_path':
+                'benchmark_imglist/imagenet/test_imagenet_v2.txt'
+            },
+            'imagenet_c': {
+                'data_dir': 'images_largescale/',
+                'imglist_path':
+                'benchmark_imglist/imagenet/test_imagenet_c.txt'
+            },
+            'imagenet_r': {
+                'data_dir': 'images_largescale/',
+                'imglist_path':
+                'benchmark_imglist/imagenet/test_imagenet_r.txt'
+            },
+            'imagenet_es': {
+                'data_dir': 'images_largescale/',
+                'imglist_path':
+                'benchmark_imglist/imagenet/test_imagenet_es.txt'
+            },
+        },
+        'ood': {
+            'val': {
+                'data_dir': 'images_largescale/',
+                'imglist_path':
+                'benchmark_imglist/imagenet/val_openimage_o.txt'
+            },
+            'near': {
+                'datasets': ['ssb_hard', 'ninco'],
+                'ssb_hard': {
+                    'data_dir': 'images_largescale/',
+                    'imglist_path':
+                    'benchmark_imglist/imagenet/test_ssb_hard.txt'
+                },
+                'ninco': {
+                    'data_dir': 'images_largescale/',
+                    'imglist_path': 'benchmark_imglist/imagenet/test_ninco.txt'
+                }
+            },
+            'far': {
+                'datasets': ['inaturalist', 'textures', 'openimage_o'],
+                'inaturalist': {
+                    'data_dir':
+                    'images_largescale/',
+                    'imglist_path':
+                    'benchmark_imglist/imagenet/test_inaturalist.txt'
+                },
+                'textures': {
+                    'data_dir': 'images_classic/',
+                    'imglist_path':
+                    'benchmark_imglist/imagenet/test_textures.txt'
+                },
+                'openimage_o': {
+                    'data_dir':
+                    'images_largescale/',
+                    'imglist_path':
+                    'benchmark_imglist/imagenet/test_openimage_o.txt'
+                },
+            },
+        }
+    },
+}
+
+import torchvision.transforms as tvs_trans
+
+# to fix "OSError: image file is truncated"
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+oodb_class_num = {
+    "patternnet": 38,
+    "dtd": 47
+}
+
+for variant in range(3):
+    for oodb_dataset_name in ["patternnet", "dtd"]:
+        oodb_dataset_name_ood = "dtd" if oodb_dataset_name == "patternnet" else "patternnet"
+        DATA_INFO[f"ooddb_{oodb_dataset_name}_{variant}"] = {
+            'num_classes': oodb_class_num[oodb_dataset_name],
+            'id': {
+                'train': {
+                    'data_dir': 'images_largescale/',
+                    'imglist_path': f"benchmark_imglist/ooddb/ooddb_{oodb_dataset_name}_id_{variant}_train.txt"
+                },
+                'val': {
+                    'data_dir': 'images_largescale/',
+                    'imglist_path': f"benchmark_imglist/ooddb/ooddb_{oodb_dataset_name}_id_{variant}_test.txt"
+                },
+                'test': {
+                    'data_dir': 'images_largescale/',
+                    'imglist_path': f"benchmark_imglist/ooddb/ooddb_{oodb_dataset_name}_id_{variant}_test.txt"
+                }
+            },
+            'ood': {
+                'near': {
+                    f"ooddb_{oodb_dataset_name}_{variant}": {
+                        'data_dir': 'images_largescale/',
+                        'imglist_path': f"benchmark_imglist/ooddb/ooddb_{oodb_dataset_name}_ood_{variant}_test.txt"
+                    },
+                },
+                'far': {
+                    'cifar10': {
+                        'data_dir': 'images_classic/',
+                        'imglist_path':
+                        'benchmark_imglist/cifar100/test_cifar10.txt'
+                    },
+                    'tin': {
+                        'data_dir': 'images_classic/',
+                        'imglist_path': 'benchmark_imglist/cifar100/test_tin.txt'
+                    },
+                    f"ooddb_{oodb_dataset_name_ood}_{variant}": {
+                        'data_dir': 'images_largescale/',
+                        'imglist_path': f"benchmark_imglist/ooddb/ooddb_{oodb_dataset_name_ood}_ood_{variant}_test.txt"
+                    },
+                    'mnist': {
+                        'data_dir': 'images_classic/',
+                        'imglist_path': 'benchmark_imglist/cifar100/test_mnist.txt'
+                    },
+                    'svhn': {
+                        'data_dir': 'images_classic/',
+                        'imglist_path': 'benchmark_imglist/cifar100/test_svhn.txt'
+                    },
+                    'texture': {
+                        'data_dir': 'images_classic/',
+                        'imglist_path':
+                        'benchmark_imglist/cifar100/test_texture.txt'
+                    },
+                    'places365': {
+                        'data_dir': 'images_classic/',
+                        'imglist_path':
+                        'benchmark_imglist/cifar100/test_places365.txt'
+                    },
+                }
+            }
+        }
+
+class ImglistDataset(BaseDataset):
+    def __init__(self,
+                 name,
+                 imglist_pth,
+                 data_dir,
+                 num_classes,
+                 preprocessor,
+                 data_aux_preprocessor,
+                 maxlen=None,
+                 dummy_read=False,
+                 dummy_size=None,
+                 **kwargs):
+        super(ImglistDataset, self).__init__(**kwargs)
+
+        self.name = name
+        with open(imglist_pth) as imgfile:
+            self.imglist = imgfile.readlines()
+        self.data_dir = data_dir
+        self.num_classes = num_classes
+        self.preprocessor = preprocessor
+        self.transform_image = preprocessor
+        self.transform_aux_image = data_aux_preprocessor
+        self.maxlen = maxlen
+
+    def __len__(self):
+        if self.maxlen is None:
+            return len(self.imglist)
+        else:
+            return min(len(self.imglist), self.maxlen)
+
+    def getitem(self, index):
+        line = self.imglist[index].strip('\n')
+        tokens = line.split(' ', 1)
+        image_name, extra_str = tokens[0], tokens[1]
+        if self.data_dir != '' and image_name.startswith('/'):
+            raise RuntimeError('image_name starts with "/"')
+        path = os.path.join(self.data_dir, image_name)
+        sample = dict()
+        sample['image_name'] = image_name
+        kwargs = {'name': self.name, 'path': path, 'tokens': tokens}
+
+        try:
+            with open(path, 'rb') as f:
+                content = f.read()
+            filebytes = content
+            buff = io.BytesIO(filebytes)
+            image = Image.open(buff).convert('RGB')
+            sample['img'] = self.transform_image(image)
+            extras = ast.literal_eval(extra_str)
+            try:
+                for key, value in extras.items():
+                    sample[key] = value
+                # if you use dic the code below will need ['label']
+                sample['gt_label'] = 0
+            except AttributeError:
+                sample['gt_label'] = int(extra_str)
+            
+
+        except Exception as e:
+            logging.error('[{}] broken'.format(path))
+            raise e
+        #return sample['data'], sample['label']
+        return sample
+
+
+class ImglistDataset_CLIPWds(BaseDataset):
+    def __init__(self,
+                 name,
+                 imglist_pth,
+                 data_dir,
+                 wds_index_json,
+                 num_classes,
+                 preprocessor,
+                 data_aux_preprocessor,
+                 maxlen=None,
+                 dummy_read=False,
+                 dummy_size=None,
+                 **kwargs):
+        super(ImglistDataset_CLIPWds, self).__init__(**kwargs)
+
+        import wids
+
+        self.name = name
+        with open(imglist_pth) as imgfile:
+            self.imglist = imgfile.readlines()
+        self.data_dir = data_dir
+        self.num_classes = num_classes
+        self.preprocessor = preprocessor
+        self.transform_image = preprocessor
+        self.transform_aux_image = data_aux_preprocessor
+        self.maxlen = maxlen
+
+        self.wds_index_json = wds_index_json
+        self.wds_dataset = wids.ShardListDataset(self.wds_index_json, cache_dir=f'./cache/wids/{name}', keep=True)
+        print(f"Loaded {self.wds_index_json} with {len(self.wds_dataset)} samples")
+
+    def __len__(self):
+        if self.maxlen is None:
+            return len(self.imglist)
+        else:
+            return min(len(self.imglist), self.maxlen)
+
+    def getitem(self, index):
+        line = self.imglist[index].strip('\n')
+        tokens = line.split(' ', 1)
+        image_name, extra_str = tokens[0], tokens[1]
+        if self.data_dir != '' and image_name.startswith('/'):
+            raise RuntimeError('image_name starts with "/"')
+        path = os.path.join(self.data_dir, image_name)
+        sample = dict()
+        sample['image_name'] = image_name
+        kwargs = {'name': self.name, 'path': path, 'tokens': tokens}
+
+        try:
+            with open(path, 'rb') as f:
+                content = f.read()
+            filebytes = content
+            buff = io.BytesIO(filebytes)
+            image = Image.open(buff).convert('RGB')
+            sample['data'] = self.transform_image(image)
+            extras = ast.literal_eval(extra_str)
+            try:
+                for key, value in extras.items():
+                    sample[key] = value
+                # if you use dic the code below will need ['label']
+                sample['label'] = 0
+            except AttributeError:
+                sample['label'] = int(extra_str)
+            
+            wds_sample = self.wds_dataset[index]
+            sample["clip_feat"] = pickle.loads(wds_sample['.clip_feat.pyd'].read())
+            #print(f"clip_feat.shape: {clip_feat.shape}")
+
+        except Exception as e:
+            print(self.wds_index_json, index, len(self.wds_dataset))
+            logging.error('[{}] broken'.format(path))
+            raise e
+        return sample
+
+
+def get_dataloader(dataset, loader_kwargs):
+    return torch.utils.data.DataLoader(dataset, **loader_kwargs)
+
+def get_id_dataset(id_name, split, preprocessor, data_root='./data', args=None):
+    data_info = DATA_INFO[id_name]
+    totensor_tf = tvs_trans.ToTensor()
+
+    if args is None or args.data_mode == "standard":
+        return ImglistDataset(
+        name='_'.join((id_name, split)),
+        imglist_pth=os.path.join(data_root,
+                                    data_info['id'][split]['imglist_path']),
+        data_dir=os.path.join(data_root,
+                                data_info['id'][split]['data_dir']),
+        num_classes=data_info['num_classes'],
+        preprocessor=preprocessor,
+        data_aux_preprocessor=totensor_tf)
+    elif args.data_mode == "webdataset":
+
+        dataset_folder_name = {
+            "ooddb_patternnet_0": "PatternNet",
+            "ooddb_dtd_0": "DTD",
+            "imagenet200": "imagenet200",
+            "imagenet": "imagenet_1k"
+        }
+
+        wds_index_filename = f"{split}_clipfeat_{args.clip_architecture}-{args.clip_pretrained}-{args.aux_dim}_index.json"
+        return ImglistDataset_CLIPWds(
+        name='_'.join((id_name, split)),
+        imglist_pth=os.path.join(data_root,
+                                    data_info['id'][split]['imglist_path']),
+        data_dir=os.path.join(data_root,
+                                data_info['id'][split]['data_dir']),
+        wds_index_json=os.path.join(data_root,data_info['id'][split]['data_dir'],dataset_folder_name.get(id_name,id_name),wds_index_filename), # TODO: fix data folder
+        num_classes=data_info['num_classes'],
+        preprocessor=preprocessor,
+        data_aux_preprocessor=totensor_tf)
+
+def get_ood_dataset(id_name, ood_name, preprocessor, split="near", data_root='./data'):
+    data_info = DATA_INFO[id_name]
+    print(data_info)
+    totensor_tf = tvs_trans.ToTensor()
+    
+    return ImglistDataset(
+    name='_'.join((id_name, ood_name)),
+    imglist_pth=os.path.join(data_root,
+                                data_info['ood'][split][ood_name]['imglist_path']),
+    data_dir=os.path.join(data_root,
+                            data_info['ood'][split][ood_name]['data_dir']),
+    num_classes=data_info['num_classes'],
+    preprocessor=preprocessor,
+    data_aux_preprocessor=totensor_tf)
+
+def get_ood_dict(id_name):
+    if "cifar" in id_name:
+        ood_datasets = {
+            'svhn': 'far',
+            'texture': 'far',
+            'tin': 'near',
+            'places365': 'far',
+            'mnist': 'far',
+            'cifar100' if id_name == 'cifar10' else 'cifar10': 'near'
+        }
+    elif "imagenet" in id_name:
+        ood_datasets = {
+            'inaturalist': 'far',
+            'textures': 'far',
+            'openimage_o': 'far',
+            'ninco': 'near',
+            'ssb_hard': 'near',
+        }
+    elif "ooddb" in id_name:
+        ood_datasets = {
+           id_name: 'near',
+           'svhn': 'far',
+            'ooddb_patternnet_0' if 'dtd' in id_name else 'ooddb_dtd_0': 'far',
+            'tin': 'far',
+            'places365': 'far',
+            'mnist': 'far',
+            'cifar10': 'far'
+        }
+    return ood_datasets
+
+#cifar100_labels = ['apple', 'aquarium_fish', 'baby', 'bear', 'beaver', 'bed', 'bee', 'beetle', 'bicycle', 'bottle', 'bowl', 'boy', 'bridge', 'bus', 'butterfly', 'camel', 'can', 'castle', 'caterpillar', 'cattle', 'chair', 'chimpanzee', 'clock', 'cloud', 'cockroach', 'couch', 'crab', 'crocodile', 'cup', 'dinosaur', 'dolphin', 'elephant', 'flatfish', 'forest', 'fox', 'girl', 'hamster', 'house', 'kangaroo', 'keyboard', 'lamp', 'lawn_mower', 'leopard', 'lion', 'lizard', 'lobster', 'man', 'maple_tree', 'motorcycle', 'mountain', 'mouse', 'mushroom', 'oak_tree', 'orange', 'orchid', 'otter', 'palm_tree', 'pear', 'pickup_truck', 'pine_tree', 'plain', 'plate', 'poppy', 'porcupine', 'possum', 'rabbit', 'raccoon', 'ray', 'road', 'rocket', 'rose', 'sea', 'seal', 'shark', 'shrew', 'skunk', 'skyscraper', 'snail', 'snake', 'spider', 'squirrel', 'streetcar', 'sunflower', 'sweet_pepper', 'table', 'tank', 'telephone', 'television', 'tiger', 'tractor', 'train', 'trout', 'tulip', 'turtle', 'wardrobe', 'whale', 'willow_tree', 'wolf', 'woman', 'worm']
+
+cifar100_labels = ['apple', 'aquarium_fish', 'baby', 'bear', 'beaver', 'bed', 'bee', 'beetle', 'bicycle', 'bottle', 'bowl', 'boy', 'bridge', 'bus', 'butterfly', 'camel', 'can', 'castle', 'caterpillar', 'cattle', 'chair', 'chimpanzee', 'clock', 'cloud', 'cockroach', 'couch', 'crab', 'crocodile', 'cup', 'dinosaur', 'dolphin', 'elephant', 'flatfish', 'forest', 'fox', 'girl', 'hamster', 'house', 'kangaroo', 'computer_keyboard', 'lamp', 'lawn_mower', 'leopard', 'lion', 'lizard', 'lobster', 'man', 'maple_tree', 'motorcycle', 'mountain', 'mouse', 'mushroom', 'oak_tree', 'orange', 'orchid', 'otter', 'palm_tree', 'pear', 'pickup_truck', 'pine_tree', 'plain', 'plate', 'poppy', 'porcupine', 'possum', 'rabbit', 'raccoon', 'ray', 'road', 'rocket', 'rose', 'sea', 'seal', 'shark', 'shrew', 'skunk', 'skyscraper', 'snail', 'snake', 'spider', 'squirrel', 'streetcar', 'sunflower', 'sweet_pepper', 'table', 'tank', 'telephone', 'television', 'tiger', 'tractor', 'train', 'trout', 'tulip', 'turtle', 'wardrobe', 'whale', 'willow_tree', 'wolf', 'woman', 'worm']
+
+# make a mapping from imagenet200 class idx to class name
+
+# first, load the txt file containing path and label: data/benchmark_imglist/imagenet200/train_imagenet200.txt
+# then, split the line by space and get the label
+
+with open('../OpenOOD/data/benchmark_imglist/imagenet200/train_imagenet200.txt') as f:
+    lines_imagenet200 = f.readlines()
+
+imagenet200_label_to_wordnet_id = {}
+
+
+for line in lines_imagenet200:
+    path = line.split(' ')[0] # format imagenet_1k/train/n01443537/n01443537_10007.JPEG
+    label = int(line.split(' ')[1].strip()) # format 0
+    wordnet_id = path.split('/')[2] # format n01443537
+    imagenet200_label_to_wordnet_id[label] = wordnet_id
+
+imagenet1k_label_to_wordnet_id = {}
+
+with open('../OpenOOD/data/benchmark_imglist/imagenet/train_imagenet.txt') as f:
+    lines_imagenet1k = f.readlines()
+
+for line in lines_imagenet1k:
+    path = line.split(' ')[0] # format imagenet_1k/train/n01443537/n01443537_10007.JPEG
+    label = int(line.split(' ')[1].strip()) # format 0
+    wordnet_id = path.split('/')[2] # format n01443537
+    imagenet1k_label_to_wordnet_id[label] = wordnet_id
+
+#print(imagenet200_label_to_wordnet_id)
+
+wordnet_id_to_class_name = {}
+
+# download https://storage.googleapis.com/download.tensorflow.org/data/imagenet_class_index.json
+import json
+import requests
+import os
+
+if not os.path.exists('imagenet_class_index.json'):
+    url = 'https://storage.googleapis.com/download.tensorflow.org/data/imagenet_class_index.json'
+    response = requests.get(url)
+    with open('imagenet_class_index.json', 'wb') as f:
+        f.write(response.content)
+
+with open('imagenet_class_index.json') as f:
+    class_index = json.load(f)
+
+for key, value in class_index.items():
+    wordnet_id = value[0]
+    class_name = value[1]
+    wordnet_id_to_class_name[wordnet_id] = class_name
+
+#print(wordnet_id_to_class_name)
+
+imagenet200_label_to_class_name = {}
+for label, wordnet_id in imagenet200_label_to_wordnet_id.items():
+    class_name = wordnet_id_to_class_name[wordnet_id]
+    imagenet200_label_to_class_name[label] = class_name
+
+imagenet1k_label_to_class_name = {}
+for label, wordnet_id in imagenet1k_label_to_wordnet_id.items():
+    class_name = wordnet_id_to_class_name[wordnet_id]
+    imagenet1k_label_to_class_name[label] = class_name
+
+#print(imagenet200_label_to_class_name)
+
+def get_label_to_class_mapping(id_name):
+    if id_name == "cifar100":
+        return cifar100_labels
+    elif id_name == "imagenet200":
+        return imagenet200_label_to_class_name
+    elif id_name == "imagenet":
+        return imagenet1k_label_to_class_name
+    elif id_name == "ooddb_patternnet_0":
+        from OODDB.utils import get_dataset_split_info
+        _,_, class_idx_to_name = get_dataset_split_info(
+            dataset="patternnet",
+            split="test",
+            data_order=0,
+        )
+        return class_idx_to_name
+    elif id_name == "ooddb_dtd_0":
+        from OODDB.utils import get_dataset_split_info
+        _,_, class_idx_to_name = get_dataset_split_info(
+            dataset="dtd",
+            split="test",
+            data_order=0,
+        )
+        print(class_idx_to_name)
+        return class_idx_to_name

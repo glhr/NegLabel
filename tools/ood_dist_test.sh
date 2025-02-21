@@ -9,6 +9,10 @@ PORT=${PORT:-$((29777+$RANDOM))}
 MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 
 PYTHONPATH="$(dirname $0)/..":$PYTHONPATH \
+
+arch="ViT-L/14"
+for id_name in imagenet imagenet200 cifar100 ooddb_dtd_0 ooddb_patternnet_0
+do
 python -m torch.distributed.launch \
     --nnodes=$NNODES \
     --node_rank=$NODE_RANK \
@@ -17,4 +21,7 @@ python -m torch.distributed.launch \
     --master_port=$PORT \
     $(dirname "$0")/ood_test.py \
     $CONFIG $CKPT\
-    --launcher pytorch ${@:4}
+    --launcher pytorch ${@:4} \
+    --id_name $id_name \
+    --clip_arch $arch
+done

@@ -1,4 +1,8 @@
 import os
+# add current directory to python path
+import sys
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import torch
 from torch import nn
 import xml.etree.ElementTree as ET
@@ -8,35 +12,29 @@ import numpy as np
 import clip
 import time
 from torchvision.datasets import CIFAR100, CIFAR10
-from ..builder import CLASSIFIERS, build_backbone, build_head, build_neck
-from ..heads import MultiLabelClsHead
-from ..utils.augment import Augments
-from .base import BaseClassifier
-from .class_names import CLASS_NAME, prompt_templates, adj_prompts_templetes
 
+from mmcls.models.classifiers.class_names import CLASS_NAME, prompt_templates, adj_prompts_templetes
+from data_utils import get_label_to_class_mapping
 
-@CLASSIFIERS.register_module()
-class CLIPScalableClassifier(BaseClassifier):
-
+class CLIPScalableClassifier():
     def __init__(self,
                  arch='ViT-B/16',
-                 train_dataset=None,
-                 class_name=None,
-                 wordnet_database=None,
+                 train_dataset="imagenet200",
+                 wordnet_database='./txtfiles/',
                  txt_exclude=None,
                  neg_subsample=-1,
-                 neg_topk=10000,
+                 neg_topk=0.15,
                  emb_batchsize=1000,
                  init_cfg=None,
-                 prompt_idx_pos=None,
-                 prompt_idx_neg=None,
+                 prompt_idx_pos=85,
+                 prompt_idx_neg=85,
                  exclude_super_class=None,
                  dump_neg=False,
                  cls_mode=False,
                  load_dump_neg=False,
-                 pencentile=1,
+                 pencentile=0.95,
                  pos_topk=None,):
-        super(CLIPScalableClassifier, self).__init__(init_cfg)
+        super(CLIPScalableClassifier, self).__init__()
         self.local_rank = os.environ['LOCAL_RANK']
         self.device = "cuda:{}".format(self.local_rank)
 
@@ -52,7 +50,10 @@ class CLIPScalableClassifier(BaseClassifier):
         #     class_name=CLASS_NAME[train_dataset][exclude_super_class]
         # else:
         #     class_name=CLASS_NAME[train_dataset]
+        class_name = get_label_to_class_mapping(train_dataset)
+        # turn dict into list
         class_name = [class_name[i] for i in range(len(class_name))]
+
         prompts = [prompt_templates[prompt_idx_pos].format(c) for c in class_name]
         text_inputs_pos = torch.cat([clip.tokenize(f"{c}") for c in prompts]).to(self.device)
 
@@ -60,7 +61,7 @@ class CLIPScalableClassifier(BaseClassifier):
             self.text_features_pos = self.clip_model.encode_text(text_inputs_pos).to(torch.float32)
             self.text_features_pos /= self.text_features_pos.norm(dim=-1, keepdim=True)
 
-        if not load_dump_neg or not os.path.exists('/data/neg_label/neg_embedding/neg_dump.pth'):
+        if not load_dump_neg or not os.path.exists('./data/neg_label/neg_embedding/neg_dump.pth'):
             txtfiles = os.listdir(wordnet_database)
             if txt_exclude:
                 file_names = txt_exclude.split(',')
@@ -116,12 +117,12 @@ class CLIPScalableClassifier(BaseClassifier):
                 if dump_neg:
                     tmp = self.text_features_neg.cpu()
                     dump_dict=dict(neg_emb=tmp, noun_length=noun_length, adj_length=adj_length)
-                    os.makedirs('/data/neg_label/neg_embedding', exist_ok=True)
-                    torch.save(dump_dict, '/data/neg_label/neg_embedding/neg_dump.pth')
+                    os.makedirs('./data/neg_label/neg_embedding', exist_ok=True)
+                    torch.save(dump_dict, './data/neg_label/neg_embedding/neg_dump.pth')
                     assert False
         else:
             tic = time.time()
-            dump_dict = torch.load('/data/neg_label/neg_embedding/neg_dump.pth')
+            dump_dict = torch.load('./data/neg_label/neg_embedding/neg_dump.pth')
             self.text_features_neg = dump_dict['neg_emb'].to(self.device)
             toc = time.time()
             print('Successfully load the negative embedding and cost {}s.'.format(toc-tic))
@@ -161,12 +162,12 @@ class CLIPScalableClassifier(BaseClassifier):
 
             self.adj_start_idx = int(len(ind_noun) * neg_topk)
 
-            ## If you want to dump the selected negative labels (with prompt), please uncomment these lines.
-            # with open("selected_neg_labels.txt", "w") as f:
-            #     for i in ind_noun[0:int(len(ind_noun)*neg_topk)]:
-            #         f.write("{}\n".format(words_noun[i]))
-            #     for j in ind_adj[0:int(len(ind_adj)*neg_topk)]:
-            #         f.write("{}\n".format(words_adj[j]))
+            # If you want to dump the selected negative labels (with prompt), please uncomment these lines.
+            with open(f"selected_neg_labels_{train_dataset}.txt", "w") as f:
+                for i in ind_noun[0:int(len(ind_noun)*neg_topk)]:
+                    f.write("{}\n".format(words_noun[i]))
+                for j in ind_adj[0:int(len(ind_adj)*neg_topk)]:
+                    f.write("{}\n".format(words_adj[j]))
     
     def extract_feat(self, img, stage='neck'):
         raise NotImplementedError
@@ -193,3 +194,25 @@ class CLIPScalableClassifier(BaseClassifier):
             pos_sim = (100.0 * image_features @ self.text_features_pos.T)
             neg_sim = (100.0 * image_features @ self.text_features_neg.T)
             return pos_sim, neg_sim
+
+
+if __name__ == "__main__" :
+    clip = CLIPScalableClassifier()
+
+    # load selected_neg_labels.txt as a set
+    neg_labels = set()
+    with open("selected_neg_labels.txt", "r") as f:
+        for line in f:
+            neg_labels.add(line.strip())
+
+    # load selected_neg_labels/selected_neg_labels_in1k_10k.txt as a set
+    neg_labels_in1k_10k = set()
+    with open("selected_neg_labels/selected_neg_labels_in1k_10k.txt", "r") as f:
+        for line in f:
+            neg_labels_in1k_10k.add(line.strip())
+
+    # compare them
+    print("neg_labels - neg_labels_in1k_10k")
+    print(neg_labels - neg_labels_in1k_10k, len(neg_labels - neg_labels_in1k_10k))
+    print("neg_labels_in1k_10k - neg_labels")
+    print(neg_labels_in1k_10k - neg_labels, len(neg_labels_in1k_10k - neg_labels))
