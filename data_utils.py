@@ -362,8 +362,8 @@ import torchvision.transforms as tvs_trans
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 oodb_class_num = {
-    "patternnet": 38,
-    "dtd": 47
+    "patternnet": 19,
+    "dtd": 23
 }
 
 for variant in range(3):
@@ -651,9 +651,109 @@ def get_ood_dict(id_name):
         }
     return ood_datasets
 
-#cifar100_labels = ['apple', 'aquarium_fish', 'baby', 'bear', 'beaver', 'bed', 'bee', 'beetle', 'bicycle', 'bottle', 'bowl', 'boy', 'bridge', 'bus', 'butterfly', 'camel', 'can', 'castle', 'caterpillar', 'cattle', 'chair', 'chimpanzee', 'clock', 'cloud', 'cockroach', 'couch', 'crab', 'crocodile', 'cup', 'dinosaur', 'dolphin', 'elephant', 'flatfish', 'forest', 'fox', 'girl', 'hamster', 'house', 'kangaroo', 'keyboard', 'lamp', 'lawn_mower', 'leopard', 'lion', 'lizard', 'lobster', 'man', 'maple_tree', 'motorcycle', 'mountain', 'mouse', 'mushroom', 'oak_tree', 'orange', 'orchid', 'otter', 'palm_tree', 'pear', 'pickup_truck', 'pine_tree', 'plain', 'plate', 'poppy', 'porcupine', 'possum', 'rabbit', 'raccoon', 'ray', 'road', 'rocket', 'rose', 'sea', 'seal', 'shark', 'shrew', 'skunk', 'skyscraper', 'snail', 'snake', 'spider', 'squirrel', 'streetcar', 'sunflower', 'sweet_pepper', 'table', 'tank', 'telephone', 'television', 'tiger', 'tractor', 'train', 'trout', 'tulip', 'turtle', 'wardrobe', 'whale', 'willow_tree', 'wolf', 'woman', 'worm']
+cifar100_labels = [
+    'apple',  # id 0
+    'aquarium_fish',
+    'baby',
+    'bear',
+    'beaver',
+    'bed',
+    'bee',
+    'beetle',
+    'bicycle',
+    'bottle',
+    'bowl',
+    'boy',
+    'bridge',
+    'bus',
+    'butterfly',
+    'camel',
+    'can',
+    'castle',
+    'caterpillar',
+    'cattle',
+    'chair',
+    'chimpanzee',
+    'clock',
+    'cloud',
+    'cockroach',
+    'couch',
+    'crab',
+    'crocodile',
+    'cup',
+    'dinosaur',
+    'dolphin',
+    'elephant',
+    'flatfish',
+    'forest',
+    'fox',
+    'girl',
+    'hamster',
+    'house',
+    'kangaroo',
+    'computer_keyboard',
+    'lamp',
+    'lawn_mower',
+    'leopard',
+    'lion',
+    'lizard',
+    'lobster',
+    'man',
+    'maple_tree',
+    'motorcycle',
+    'mountain',
+    'mouse',
+    'mushroom',
+    'oak_tree',
+    'orange',
+    'orchid',
+    'otter',
+    'palm_tree',
+    'pear',
+    'pickup_truck',
+    'pine_tree',
+    'plain',
+    'plate',
+    'poppy',
+    'porcupine',
+    'possum',
+    'rabbit',
+    'raccoon',
+    'ray',
+    'road',
+    'rocket',
+    'rose',
+    'sea',
+    'seal',
+    'shark',
+    'shrew',
+    'skunk',
+    'skyscraper',
+    'snail',
+    'snake',
+    'spider',
+    'squirrel',
+    'streetcar',
+    'sunflower',
+    'sweet_pepper',
+    'table',
+    'tank',
+    'telephone',
+    'television',
+    'tiger',
+    'tractor',
+    'train',
+    'trout',
+    'tulip',
+    'turtle',
+    'wardrobe',
+    'whale',
+    'willow_tree',
+    'wolf',
+    'woman',
+    'worm',
+]
 
-cifar100_labels = ['apple', 'aquarium_fish', 'baby', 'bear', 'beaver', 'bed', 'bee', 'beetle', 'bicycle', 'bottle', 'bowl', 'boy', 'bridge', 'bus', 'butterfly', 'camel', 'can', 'castle', 'caterpillar', 'cattle', 'chair', 'chimpanzee', 'clock', 'cloud', 'cockroach', 'couch', 'crab', 'crocodile', 'cup', 'dinosaur', 'dolphin', 'elephant', 'flatfish', 'forest', 'fox', 'girl', 'hamster', 'house', 'kangaroo', 'computer_keyboard', 'lamp', 'lawn_mower', 'leopard', 'lion', 'lizard', 'lobster', 'man', 'maple_tree', 'motorcycle', 'mountain', 'mouse', 'mushroom', 'oak_tree', 'orange', 'orchid', 'otter', 'palm_tree', 'pear', 'pickup_truck', 'pine_tree', 'plain', 'plate', 'poppy', 'porcupine', 'possum', 'rabbit', 'raccoon', 'ray', 'road', 'rocket', 'rose', 'sea', 'seal', 'shark', 'shrew', 'skunk', 'skyscraper', 'snail', 'snake', 'spider', 'squirrel', 'streetcar', 'sunflower', 'sweet_pepper', 'table', 'tank', 'telephone', 'television', 'tiger', 'tractor', 'train', 'trout', 'tulip', 'turtle', 'wardrobe', 'whale', 'willow_tree', 'wolf', 'woman', 'worm']
 
 # make a mapping from imagenet200 class idx to class name
 
@@ -686,11 +786,14 @@ for line in lines_imagenet1k:
 #print(imagenet200_label_to_wordnet_id)
 
 wordnet_id_to_class_name = {}
+wordnet_id_to_class_idx = {}
 
 # download https://storage.googleapis.com/download.tensorflow.org/data/imagenet_class_index.json
 import json
 import requests
 import os
+
+from open_clip.zero_shot_metadata import IMAGENET_CLASSNAMES
 
 if not os.path.exists('imagenet_class_index.json'):
     url = 'https://storage.googleapis.com/download.tensorflow.org/data/imagenet_class_index.json'
@@ -705,42 +808,84 @@ for key, value in class_index.items():
     wordnet_id = value[0]
     class_name = value[1]
     wordnet_id_to_class_name[wordnet_id] = class_name
+    wordnet_id_to_class_idx[wordnet_id] = int(key)
 
 #print(wordnet_id_to_class_name)
 
-imagenet200_label_to_class_name = {}
+imagenet200_label_to_class_idx = {}
 for label, wordnet_id in imagenet200_label_to_wordnet_id.items():
-    class_name = wordnet_id_to_class_name[wordnet_id]
-    imagenet200_label_to_class_name[label] = class_name
+    class_idx = wordnet_id_to_class_idx[wordnet_id]
+    imagenet200_label_to_class_idx[label] = class_idx
+
+imagenet1k_label_to_class_idx = {}
+for label, wordnet_id in imagenet1k_label_to_wordnet_id.items():
+    class_idx = wordnet_id_to_class_idx[wordnet_id]
+    imagenet1k_label_to_class_idx[label] = class_idx
+
+imagenet200_label_to_class_name = {}
+for orig_idx, in_idx in imagenet200_label_to_class_idx.items():
+    imagenet200_label_to_class_name[orig_idx] = IMAGENET_CLASSNAMES[in_idx]
 
 imagenet1k_label_to_class_name = {}
-for label, wordnet_id in imagenet1k_label_to_wordnet_id.items():
-    class_name = wordnet_id_to_class_name[wordnet_id]
-    imagenet1k_label_to_class_name[label] = class_name
-
+for orig_idx, in_idx in imagenet1k_label_to_class_idx.items():
+    imagenet1k_label_to_class_name[orig_idx] = IMAGENET_CLASSNAMES[in_idx]
 #print(imagenet200_label_to_class_name)
 
-def get_label_to_class_mapping(id_name):
+def get_label_to_class_mapping(id_name, ooddb_split="train",sanity_check=True):
+    
     if id_name == "cifar100":
-        return cifar100_labels
+        mapping = dict(zip(range(len(cifar100_labels)),cifar100_labels))
+        
     elif id_name == "imagenet200":
-        return imagenet200_label_to_class_name
+        mapping = imagenet200_label_to_class_name
     elif id_name == "imagenet":
-        return imagenet1k_label_to_class_name
+        mapping = imagenet1k_label_to_class_name
     elif id_name == "ooddb_patternnet_0":
         from OODDB.utils import get_dataset_split_info
         _,_, class_idx_to_name = get_dataset_split_info(
             dataset="patternnet",
-            split="test",
+            split=ooddb_split,
             data_order=0,
         )
-        return class_idx_to_name
+        mapping = class_idx_to_name
     elif id_name == "ooddb_dtd_0":
         from OODDB.utils import get_dataset_split_info
         _,_, class_idx_to_name = get_dataset_split_info(
             dataset="dtd",
-            split="test",
+            split=ooddb_split,
             data_order=0,
         )
         print(class_idx_to_name)
-        return class_idx_to_name
+        mapping = class_idx_to_name
+
+    mapping ={k:v.replace("_"," ") for k,v in mapping.items()}
+
+    if sanity_check:
+        assert len(mapping) == DATA_INFO[id_name]["num_classes"], \
+        f"Number of classes in mapping ({len(mapping)}) does not match number of classes in dataset ({DATA_INFO[id_name]['num_classes']})"
+    return mapping
+    
+if __name__ == "__main__":
+    
+    print("--patternnet")
+    id_classes = get_label_to_class_mapping("ooddb_patternnet_0", ooddb_split="train")
+    all_classes = get_label_to_class_mapping("ooddb_patternnet_0", ooddb_split="test", sanity_check=False)
+
+    ood_classes = {k:v for k,v in all_classes.items() if k not in id_classes}
+
+    print(f"ID classes: {id_classes}")
+    print(f"OOD classes: {ood_classes}")
+
+    print("-dtd")
+    id_classes = get_label_to_class_mapping("ooddb_dtd_0", ooddb_split="train")
+    all_classes = get_label_to_class_mapping("ooddb_dtd_0", ooddb_split="test", sanity_check=False)
+
+    ood_classes = {k:v for k,v in all_classes.items() if k not in id_classes}
+
+    print(f"ID classes: {id_classes}")
+    print(f"OOD classes: {ood_classes}")
+
+    for id_name in ["cifar100","imagenet200","imagenet"]:
+        print(f"------------",id_name)
+        id_classes = get_label_to_class_mapping(id_name)
+        print(id_classes)
