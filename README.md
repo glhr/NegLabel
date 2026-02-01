@@ -1,3 +1,7 @@
+This repo is non-official and adapted from https://github.com/XueJiang16/NegLabel. See the original README below from https://github.com/XueJiang16/NegLabel below.
+
+---------------------------------------------------------------------------------------
+
 # Negative Label Guided OOD Detection with Pretrained Vision-Language Models
 
 
@@ -71,3 +75,4 @@ year={2024},
 url={https://openreview.net/forum?id=xUO1HXz4an}
 }
 ```
+
